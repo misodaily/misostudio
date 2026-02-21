@@ -13,7 +13,7 @@ const config: Config = {
             },
             colors: {
                 miso: {
-                    DEFAULT: '#FB8500',
+                    DEFAULT: '#F97316',
                     light: '#FFB703',
                 }
             }
