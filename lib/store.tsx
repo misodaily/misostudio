@@ -1,5 +1,10 @@
 'use client'
 
+/**
+ * Simplified store — only manages credit balance (UI shared state).
+ * Jobs and history are fetched directly from API in each page.
+ */
+
 import {
   createContext,
   useCallback,
@@ -8,94 +13,37 @@ import {
   useReducer,
   type ReactNode,
 } from 'react'
-import { generateId } from './utils'
-import type { Template } from './templates'
-import { TEMPLATES } from './templates'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-export type CreateOptions = {
-  durationSec: 3 | 5
-  intensity: 'low' | 'mid' | 'high'
-  keepFirstFrame: boolean
-}
-
-export type CreateJobStatus =
-  | 'queued'
-  | 'processing'
-  | 'done'
-  | 'failed'
-  | 'canceled'
-
-export type CreateJob = {
-  jobId: string
-  templateId: string
-  sourceImageDataUrl: string
-  options: CreateOptions
-  status: CreateJobStatus
-  progress: number // 0–100
-  createdAt: number
-  result?: { previewVideoUrl: string; shareUrl: string }
-  errorMessage?: string
-}
-
 type State = {
-  creditBalance: number
-  templates: Template[]
-  jobs: Record<string, CreateJob>
-  history: string[] // jobId, newest first
+  creditBalance: number | null // null = not yet loaded from API
 }
 
 type Action =
-  | { type: 'ADD_CREDITS'; amount: number }
-  | { type: 'SPEND_CREDITS'; amount: number }
-  | { type: 'CREATE_JOB'; job: CreateJob }
-  | { type: 'UPDATE_JOB'; jobId: string; updates: Partial<CreateJob> }
-  | { type: 'HYDRATE'; state: State }
+  | { type: 'SET_BALANCE'; balance: number }
+  | { type: 'ADJUST_BALANCE'; delta: number }
 
-// ── Default state ──────────────────────────────────────────────────────────
-
-const DEFAULT_STATE: State = {
-  creditBalance: 15,
-  templates: TEMPLATES,
-  jobs: {},
-  history: [],
+type StoreContextValue = {
+  creditBalance: number | null
+  setBalance: (balance: number) => void
+  adjustBalance: (delta: number) => void
 }
 
 // ── Reducer ────────────────────────────────────────────────────────────────
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case 'HYDRATE':
-      return { ...action.state, templates: TEMPLATES }
-
-    case 'ADD_CREDITS':
-      return { ...state, creditBalance: state.creditBalance + action.amount }
-
-    case 'SPEND_CREDITS':
+    case 'SET_BALANCE':
+      return { ...state, creditBalance: action.balance }
+    case 'ADJUST_BALANCE':
       return {
         ...state,
-        creditBalance: Math.max(0, state.creditBalance - action.amount),
+        creditBalance:
+          state.creditBalance !== null
+            ? Math.max(0, state.creditBalance + action.delta)
+            : null,
       }
-
-    case 'CREATE_JOB': {
-      const newJobs = { ...state.jobs, [action.job.jobId]: action.job }
-      const newHistory = [action.job.jobId, ...state.history]
-      return { ...state, jobs: newJobs, history: newHistory }
-    }
-
-    case 'UPDATE_JOB': {
-      const existing = state.jobs[action.jobId]
-      if (!existing) return state
-      return {
-        ...state,
-        jobs: {
-          ...state.jobs,
-          [action.jobId]: { ...existing, ...action.updates },
-        },
-      }
-    }
-
     default:
       return state
   }
@@ -103,108 +51,36 @@ function reducer(state: State, action: Action): State {
 
 // ── Context ────────────────────────────────────────────────────────────────
 
-type StoreContextValue = {
-  state: State
-  addCredits: (amount: number) => void
-  spendCredits: (amount: number) => void
-  createJob: (
-    templateId: string,
-    sourceImageDataUrl: string,
-    options: CreateOptions,
-  ) => string
-  updateJob: (jobId: string, updates: Partial<CreateJob>) => void
-}
-
 const StoreContext = createContext<StoreContextValue | null>(null)
 
-// ── Provider ───────────────────────────────────────────────────────────────
-
-const STORAGE_KEY = 'miso-studio-v1'
-
-function loadFromStorage(): State | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as State
-    return parsed
-  } catch {
-    return null
-  }
-}
-
-function saveToStorage(state: State) {
-  if (typeof window === 'undefined') return
-  try {
-    // Don't persist template data (it's static)
-    const toSave = {
-      creditBalance: state.creditBalance,
-      jobs: state.jobs,
-      history: state.history,
-      templates: [],
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
-  } catch {
-    // ignore
-  }
-}
-
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, DEFAULT_STATE)
+  const [state, dispatch] = useReducer(reducer, { creditBalance: null })
 
-  // Hydrate from localStorage on mount
+  // Fetch credit balance from API on mount (only if logged in)
   useEffect(() => {
-    const saved = loadFromStorage()
-    if (saved) {
-      dispatch({ type: 'HYDRATE', state: { ...saved, templates: TEMPLATES } })
-    }
+    fetch('/api/credits/balance')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.balance !== undefined) {
+          dispatch({ type: 'SET_BALANCE', balance: data.balance })
+        }
+      })
+      .catch(() => {
+        // Not logged in or network error — leave null
+      })
   }, [])
 
-  // Persist to localStorage on every state change
-  useEffect(() => {
-    saveToStorage(state)
-  }, [state])
-
-  const addCredits = useCallback((amount: number) => {
-    dispatch({ type: 'ADD_CREDITS', amount })
+  const setBalance = useCallback((balance: number) => {
+    dispatch({ type: 'SET_BALANCE', balance })
   }, [])
 
-  const spendCredits = useCallback((amount: number) => {
-    dispatch({ type: 'SPEND_CREDITS', amount })
+  const adjustBalance = useCallback((delta: number) => {
+    dispatch({ type: 'ADJUST_BALANCE', delta })
   }, [])
-
-  const createJob = useCallback(
-    (
-      templateId: string,
-      sourceImageDataUrl: string,
-      options: CreateOptions,
-    ): string => {
-      const jobId = generateId()
-      const job: CreateJob = {
-        jobId,
-        templateId,
-        sourceImageDataUrl,
-        options,
-        status: 'queued',
-        progress: 0,
-        createdAt: Date.now(),
-      }
-      dispatch({ type: 'CREATE_JOB', job })
-      return jobId
-    },
-    [],
-  )
-
-  const updateJob = useCallback(
-    (jobId: string, updates: Partial<CreateJob>) => {
-      dispatch({ type: 'UPDATE_JOB', jobId, updates })
-    },
-    [],
-  )
 
   return (
     <StoreContext.Provider
-      value={{ state, addCredits, spendCredits, createJob, updateJob }}
+      value={{ creditBalance: state.creditBalance, setBalance, adjustBalance }}
     >
       {children}
     </StoreContext.Provider>
@@ -219,15 +95,6 @@ export function useStore() {
   return ctx
 }
 
-export function useCreditBalance() {
-  return useStore().state.creditBalance
-}
-
-export function useJob(jobId: string): CreateJob | undefined {
-  return useStore().state.jobs[jobId]
-}
-
-export function useHistory() {
-  const { state } = useStore()
-  return state.history.map((id) => state.jobs[id]).filter(Boolean) as CreateJob[]
+export function useCreditBalance(): number | null {
+  return useStore().creditBalance
 }

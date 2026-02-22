@@ -9,7 +9,6 @@ export function TemplateGrid({ templates }: TemplateGridProps) {
   if (templates.length === 0) {
     return (
       <div className="py-24 text-center">
-        <p className="text-4xl mb-4" aria-hidden="true">✦</p>
         <p className="text-gray-400 text-sm">해당 카테고리에 템플릿이 없습니다.</p>
       </div>
     )

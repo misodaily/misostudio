@@ -1,39 +1,72 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useJob } from '@/lib/store'
 import { ResultPreview } from '@/components/result-preview'
 import { useToast } from '@/components/toast-provider'
 import { getTemplateById } from '@/lib/templates'
 import { formatDate } from '@/lib/utils'
 
+type JobData = {
+  jobId: string
+  templateId: string
+  status: string
+  createdAt: string
+  previewVideoUrl: string | null
+  sourceImageUrl: string | null
+}
+
 export default function ResultPage() {
   const { jobId } = useParams<{ jobId: string }>()
-  const job = useJob(jobId)
   const router = useRouter()
   const toast = useToast()
+
+  const [job, setJob] = useState<JobData | null>(null)
+  const [notFound, setNotFound] = useState(false)
+
+  useEffect(() => {
+    async function fetchJob() {
+      try {
+        const res = await fetch(`/api/jobs/${jobId}`)
+        if (res.status === 404) { setNotFound(true); return }
+        if (res.status === 401) { router.push('/auth/login'); return }
+        if (!res.ok) return
+        const data = await res.json()
+        const j = data.job
+        setJob({
+          jobId: j.jobId,
+          templateId: j.templateId,
+          status: j.status,
+          createdAt: j.created_at,
+          previewVideoUrl: j.previewVideoUrl ?? null,
+          sourceImageUrl: j.sourceImageUrl ?? null,
+        })
+      } catch { /* ignore */ }
+    }
+    fetchJob()
+  }, [jobId, router])
 
   const template = job ? getTemplateById(job.templateId) : undefined
 
   async function handleShare() {
-    const url = job?.result?.shareUrl ?? window.location.href
     try {
+      const res = await fetch(`/api/jobs/${jobId}/share`, { method: 'POST' })
+      const url = res.ok ? (await res.json()).shareUrl : window.location.href
       await navigator.clipboard.writeText(url)
       toast('공유 링크가 복사되었습니다!', 'success')
     } catch {
-      // Fallback for non-secure contexts
-      toast('링크: ' + url, 'info')
+      toast('공유 링크 복사에 실패했습니다.', 'error')
     }
   }
 
   function handleDownload() {
-    if (!job?.result?.previewVideoUrl) {
+    if (!job?.previewVideoUrl) {
       toast('다운로드할 영상이 없습니다.', 'error')
       return
     }
     const a = document.createElement('a')
-    a.href = job.result.previewVideoUrl
+    a.href = `/api/jobs/${jobId}/download`
     a.download = `miso-studio-${jobId}.mp4`
     document.body.appendChild(a)
     a.click()
@@ -46,10 +79,9 @@ export default function ResultPage() {
     router.push(`/t/${job.templateId}`)
   }
 
-  if (!job) {
+  if (notFound) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4 px-4">
-        <p className="text-5xl" aria-hidden="true">✦</p>
         <h1 className="text-xl font-bold text-gray-900">결과를 찾을 수 없습니다</h1>
         <Link
           href="/"
@@ -61,7 +93,20 @@ export default function ResultPage() {
     )
   }
 
-  if (job.status !== 'done' || !job.result) {
+  if (!job) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-20 text-center">
+        <div
+          className="w-16 h-16 rounded-3xl mx-auto mb-6 animate-pulse"
+          style={{ background: 'linear-gradient(135deg, #F97316, #FFB703)' }}
+          aria-hidden="true"
+        />
+        <p className="text-gray-400 text-sm">불러오는 중…</p>
+      </div>
+    )
+  }
+
+  if (job.status !== 'done' || !job.previewVideoUrl) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4 px-4 text-center">
         <p className="text-5xl" aria-hidden="true">⏳</p>
@@ -78,7 +123,7 @@ export default function ResultPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10 animate-fade-in">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10">
       {/* Header */}
       <div className="flex items-center gap-4 mb-8">
         <Link
@@ -124,15 +169,15 @@ export default function ResultPage() {
         <div>
           <h1 className="text-lg font-black text-gray-900">영상 생성 완료!</h1>
           <p className="text-xs text-gray-400">
-            {template?.titleKo} · {formatDate(job.createdAt)}
+            {template?.titleKo} · {formatDate(new Date(job.createdAt).getTime())}
           </p>
         </div>
       </div>
 
       {/* Preview & actions */}
       <ResultPreview
-        sourceImageDataUrl={job.sourceImageDataUrl}
-        previewVideoUrl={job.result.previewVideoUrl}
+        sourceImageDataUrl={job.sourceImageUrl ?? ''}
+        previewVideoUrl={job.previewVideoUrl}
         onShare={handleShare}
         onDownload={handleDownload}
         onRetry={handleRetry}

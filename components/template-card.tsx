@@ -7,8 +7,13 @@ type TemplateCardProps = {
   template: Template
 }
 
+function splitCamelCase(title: string): string[] {
+  return title.split(/(?<=[a-z])(?=[A-Z])/)
+}
+
 export function TemplateCard({ template }: TemplateCardProps) {
   const router = useRouter()
+  const titleWords = splitCamelCase(template.titleEn)
 
   return (
     <button
@@ -54,7 +59,7 @@ export function TemplateCard({ template }: TemplateCardProps) {
           <p
             className="font-black leading-none tracking-tighter select-none"
             style={{
-              fontSize: 'clamp(2.5rem, 8vw, 4.5rem)',
+              fontSize: 'clamp(1.8rem, 5.5vw, 3rem)',
               color: template.accentColor,
               textShadow: template.textDark
                 ? 'none'
@@ -63,7 +68,9 @@ export function TemplateCard({ template }: TemplateCardProps) {
             }}
             aria-hidden="true"
           >
-            {template.titleEn}
+            {titleWords.map((word, i) => (
+              <span key={i} style={{ display: 'block' }}>{word}</span>
+            ))}
           </p>
         </div>
 
